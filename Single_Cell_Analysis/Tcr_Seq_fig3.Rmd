@@ -1,0 +1,627 @@
+---
+title: "Clonotypes_TCRSeq"
+author: "Ankush Sharma and Ivana Spasevska"
+date: "11/19/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r packages ,include=FALSE }
+#devtools::install_github("ncborcherding/scRepertoire")
+library(dbplyr)
+suppressMessages(library(scRepertoire))
+suppressMessages(library(Seurat))
+#other methods 
+
+library(markdown)
+#library(AnnotationHub)
+library(clustree)
+library(cowplot)
+library(ensembldb)
+library(ggthemes)
+library(ggplot2)
+library(ggplotify)
+library(gridGraphics)
+library(Matrix)
+library(org.Hs.eg.db)
+library(Matrix.utils)
+library(patchwork)
+library(reticulate)
+library(reshape2)
+library(RCurl)
+library(scCATCH)
+library(scales)
+library(scater)
+library(Seurat)
+library(SingleCellExperiment)
+library(SummarizedExperiment)
+library(EnsDb.Hsapiens.v86)
+library(BSgenome.Hsapiens.UCSC.hg38)
+library(chromVAR)
+library(tidyverse)
+library(edgeR)
+library(plotly)
+library(robustbase)
+library(knitr)
+
+# Extra
+library(kableExtra) #load after dplyr
+library(VISION)
+#library(dyno)
+library(JASPAR2018)
+library(TFBSTools)
+library(Signac)
+
+
+```
+
+
+```{r Preprocess data , echo=FALSE}
+
+library(tibble)
+library(Seurat)
+library(data.table)
+library(stringr)
+currentjob="TCR"
+
+CD4T_integrated <- readRDS("/Users/ankushs/Dropbox (UiO)/LymphomaBiology/TregLymphoma/Analysis/sc_TREG_pipeline/Part2_Clustered_dataset.rds")
+n1_clone <- read.csv("/Users/ankushs/Dropbox (UiO)/LymphomaBiology/TregLymphoma/Sequencing_Data_input/TCR_Input/input_tcr_files/1_filtered_contig_annotations.csv",sep=",")
+n2_clone <- read.csv("/Users/ankushs/Dropbox (UiO)/LymphomaBiology/TregLymphoma/Sequencing_Data_input/TCR_Input/input_tcr_files/2_filtered_contig_annotations.csv",sep=",")
+n3_clone <- read.csv("/Users/ankushs/Dropbox (UiO)/LymphomaBiology/TregLymphoma/Sequencing_Data_input/TCR_Input/input_tcr_files/3_filtered_contig_annotations.csv",sep=",")
+contiglist <- list(n1_clone,n2_clone, n3_clone)
+contiglist
+head(contiglist[[1]])
+
+#Here we are fetching dataof samples, cluster and ptg groups
+info1 <- cbind(CD4T_integrated$HTO_classification , CD4T_integrated$orig.ident,CD4T_integrated$seurat_clusters)
+info1
+info1<- as.data.frame(info1)
+info1
+colnames(info1)<- c("HTO_classification","PTG","seurat_clusters")
+head(info1)
+info1 <- rownames_to_column(info1, var = "barcode")
+
+info1$barcode <- gsub("ptg1_","", info1$barcode)
+info1$barcode <- gsub("ptg2_","", info1$barcode)
+info1$barcode <- gsub("ptg3_","", info1$barcode)
+
+
+#Here we are binding TCR files into one file
+#TCR_data <- rbind(pt1_vdj$ptg1_1,pt1_vdj$ptg2_2,pt1_vdj$ptg3_3)
+TCR_data <- rbind(n1_clone,n2_clone,n3_clone)
+#merging files based on barcodesbarcode from RNASEQ & TCR
+ptg_all_clone<- merge(TCR_data,info1, by.x="barcode")
+ptg_all_clone
+#colnames(ptg_all_clone)<- c("barcode","HTO_classification","PTG","seurat_clusters")
+#setnames(ptg_all_clone, old = c('V1','V2','V3'), new = c('SAMPLE','PTG','seurat_clusters'))
+#adding column with individual patients 
+ptg_all_clone$patient  = str_c(ptg_all_clone$HTO_classification,"_",ptg_all_clone$PTG)
+ptg_all_clone$patient = gsub("C251-FL_ptg", "FL", ptg_all_clone$patient)
+ptg_all_clone$patient = gsub("C252-DLBCL_ptg", "DLBCL", ptg_all_clone$patient)
+ptg_all_clone$patient = gsub("C253-Tonsil_ptg", "Tonsil", ptg_all_clone$patient)
+ptg_all_clone
+
+###SAVING FILES
+write.table(ptg_all_clone,"TCR_data_reorganized.txt", sep= "\t", row.names = FALSE,quote= FALSE)
+###SAVING SCRIPTS
+fl1_clone <- ptg_all_clone[grep("FL1", ptg_all_clone$patient), ]
+write.table(fl1_clone,"FL1_TCRDATA_1.txt", sep= "\t", row.names = FALSE,quote= FALSE)
+fl2_clone <- ptg_all_clone[grep("FL2", ptg_all_clone$patient), ]
+write.table(fl2_clone,"FL2_TCRDATA_1.txt", sep= "\t", row.names = FALSE,quote= FALSE)
+fl3_clone <- ptg_all_clone[grep("FL3", ptg_all_clone$patient), ]
+write.table(fl3_clone,"FL3_TCRDATA_1.txt", sep= "\t", row.names = FALSE,quote= FALSE)
+d1_clone <- ptg_all_clone[grep("DLBCL1", ptg_all_clone$patient), ]
+write.table(d1_clone,"DLBCL1_TCRDATA_1.txt", sep= "\t", row.names = FALSE,quote= FALSE)
+d2_clone <- ptg_all_clone[grep("DLBCL2", ptg_all_clone$patient), ]
+write.table(d2_clone,"DLBCL2_TCRDATA_1.txt", sep= "\t", row.names = FALSE,quote= FALSE)
+d3_clone <- ptg_all_clone[grep("DLBCL3", ptg_all_clone$patient), ]
+write.table(d3_clone,"DLBCL3_TCRDATA_1.txt", sep= "\t", row.names = FALSE,quote= FALSE)
+t1_clone <- ptg_all_clone[grep("Tonsil1", ptg_all_clone$patient), ]
+write.table(t1_clone,"Tonsil1_TCRDATA.txt", sep= "\t", row.names = FALSE,quote= FALSE)
+t2_clone <- ptg_all_clone[grep("Tonsil2", ptg_all_clone$patient), ]
+write.table(t2_clone,"Tonsil2_TCRDATA.txt", sep= "\t", row.names = FALSE,quote= FALSE)
+t3_clone <- ptg_all_clone[grep("Tonsil3", ptg_all_clone$patient), ]
+write.table(t3_clone,"Tonsil3_TCRDATA.txt", sep= "\t", row.names = FALSE,quote= FALSE)
+
+```
+
+
+
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r Import data , echo=FALSE}
+currentjob="TCR"
+contiglist <- list(fl1_clone,fl2_clone, fl3_clone,d1_clone,d2_clone,d3_clone,t1_clone,t2_clone,t3_clone)
+head(contiglist[[1]])
+contiglist
+```
+
+```{r data built into repertoire , echo=FALSE}
+
+#additional labeling of the standard barcode. Before we proceed, we will use the function stripBarcode(), No need for stripBarcode function, if the barcodes look like:
+# AAACGGGAGATGGCGT-1 or AAACGGGAGATGGCGT
+
+combined <- combineTCR(contiglist, samples = c("FL","FL", "FL","DLBCL","DLBCL", "DLBCL","Tonsil","Tonsil", "Tonsil"), ID = c("1", "2", "3","1","2","3","1","2","3"), cells ="T-AB")
+contiglist
+
+
+```
+
+
+
+```{r ADDING TCRTOscRNASEQ  , echo=FALSE}
+# Create a function to trim unwanted "-1" and append sample information before barcodes. This is to add tCR metadata to scRNA-Seq
+
+barcoder <- function(df, prefix,  trim="\\-1"){
+  
+  df$barcode <- gsub(trim, "", df$barcode)
+  df$barcode <- paste0(prefix, df$barcode)
+  
+  df
+}
+
+# Override barcode data with the suitable replacement
+
+n1_clone <- barcoder(n1_clone, prefix = "n1_")
+n2_clone <- barcoder(n1_clone, prefix = "n2_")
+n3_clone <- barcoder(n1_clone, prefix = "n3_")
+
+
+barcoder <- function(df, prefix,  trim=""){
+  
+  df$barcode <- gsub(trim, "", df$barcode)
+  df$barcode <- paste0(prefix, df$barcode)
+  
+  df
+}
+
+# Override barcode data with the suitable replacement
+
+ptg1_clone <- barcoder(n1_clone, prefix = "ptg1_")
+ptg2_clone <- barcoder(n1_clone, prefix = "ptg2_")
+ptg3_clone <- barcoder(n1_clone, prefix = "ptg3_")
+
+
+
+# Combine VDJ data from 4 separate experiments
+
+all_cln <- rbind(ptg1_clone,
+                 ptg2_clone,
+                 ptg3_clone
+                 )
+
+# Generate a function that will concatenate unique data entries and collapse duplicate rows
+# To do this, I first factorize the data and then get factor levels as unique data points
+# Then I paste these  data points together separated with "__" to access later on if needed
+
+data_concater <- function(x){
+  
+  x<- levels(factor(x))
+  
+  paste(x, collapse = "__")
+  
+}
+
+# Use data.table package for efficient calculations. Dplyr takes a long time in my experience.
+
+suppressPackageStartupMessages(library(data.table))
+
+all_cln <- as.data.table(all_cln)
+
+all_cln
+
+# Prepare a progress bar to monitor progress (helpful for large aggregations)
+
+grpn = uniqueN(all_cln$barcode)
+pb <- txtProgressBar(min = 0, max = grpn, style = 3)
+
+# This code applies data_concater function per  barcodes to create a 
+# concatenated string with  the information we want to keep
+
+all_cln_collapsed <- all_cln[, {setTxtProgressBar(pb,.GRP); lapply(.SD, data_concater)} , by=barcode]
+
+# Or you can use the simple code below if you don't care about the progress bar
+# all_cln_collapsed <- all_cln[, lapply(.SD, data_concater), by=barcode]
+
+# Assign row names for merging into combined Seurat object
+
+rownames(all_cln_collapsed) <- all_cln_collapsed$barcode
+rownames(all_cln_collapsed)
+combined_1 <- AddMetaData(CD4T_integrated, metadata = all_cln_collapsed)
+
+
+```
+
+
+```{r DLBCL1 data  , echo=FALSE}
+
+#Com
+d1_pt_vdj <- list(d1_clone)
+d1_pt_vdj
+d1_pt_vdj1  <- combineTCR(d1_pt_vdj, samples = c("ptg1"), ID = c("1"), cells ="T-AB")
+d1_pt_vdj1
+d1_pt_vdj1$ptg1_1$barcode <- gsub("_1","", d1_pt_vdj1$ptg1_1$barcode)
+#d1_pt_vdj1$ptg2_2$barcode <- gsub("_2","", d1_pt_vdj1$ptg2_2$barcode)
+#d1_pt_vdj1$ptg3_3$barcode <- gsub("_3","", d1_pt_vdj1$ptg3_3$barcode)
+d1_pt_vdj1
+
+combined_D1 = combineExpression(d1_pt_vdj1, CD4T_integrated, cloneCall="gene+nt",groupBy = "sample")
+combined_D1
+colorblind_vector <- colorRampPalette(c("#FF4B20", "#C6FDEC","#FFB433", "#7AC5FF","#0348A6", "black"))
+p1<-DimPlot(combined_D1, group.by = "HTO_classification") + NoLegend() +
+    scale_color_manual(values=colorblind_vector(3))
+p1
+colorblind_vector <- colorRampPalette(c("#D51F26","#89288F", "blue","#CCCCCC", "#F47D2B"))
+slot(CD4T_integrated, "meta.data")$cloneType <- factor(slot(combined_D1, "meta.data")$cloneType,
+                levels = c("Hyperexpanded (100 < X <= 1000)", "Large (10 < X <= 100)",
+                            "Medium (5 < X <= 10)", "Small (1 < X <= 5)",
+                            "Single (0 < X <= 1)"))
+p2<-DimPlot(combined_D1, group.by = "cloneType") + scale_color_manual(values = colorblind_vector(6))
+p1+p2
+
+d1_clonotype <- as.data.frame(combined_D1$cloneType)
+d1_clonotype
+d1_TCRcluster <- as.data.frame(combined_D1$seurat_clusters)
+d1_clonotype_clusters<- cbind(d1_clonotype, d1_TCRcluster)
+d1_CTgene <- as.data.frame(combined_D1$CTgene)
+d1_clonotype_info<- cbind(d1_clonotype_clusters, d1_CTgene)
+names(d1_clonotype_info) <- make.names(names(d1_clonotype_info))
+write.table(d1_clonotype_info,"d1_clonotype_info.txt", sep= "\t", row.names = FALSE,quote= FALSE)
+
+
+#This block gives us counts of clonotype expansion per cluster data plotted in figure3d (Used graphpad prism for this plot )
+d1_expansionpercluster<- occupiedscRepertoire(combined_D1, x.axis = "seurat_clusters")
+d1_expansionpercluster <- as.data.frame(d1_expansionpercluster$data)
+d1_expansionpercluster
+write.table(d1_expansionpercluster,"d1_clonotype_expansion_table.txt", sep= "\t", row.names = FALSE,quote= FALSE)
+```
+
+```{r DLBCL2 data  , echo=FALSE}
+
+#Com
+d2_pt_vdj <- list(d2_clone)
+d2_pt_vdj
+d2_pt_vdj1  <- combineTCR(d2_pt_vdj, samples = c("ptg2"), ID = c("2"), cells ="T-AB")
+d2_pt_vdj1
+d2_pt_vdj1$ptg2_2$barcode <- gsub("_2","", d2_pt_vdj1$ptg2_2$barcode)
+d2_pt_vdj1
+
+combined_D2 = combineExpression(d2_pt_vdj1, CD4T_integrated, cloneCall="gene+nt",groupBy = "sample")
+combined_D2
+colorblind_vector <- colorRampPalette(c("#FF4B20", "#C6FDEC","#FFB433", "#7AC5FF","#0348A6", "black"))
+p1<-DimPlot(combined_D2, group.by = "HTO_classification") + NoLegend() +
+    scale_color_manual(values=colorblind_vector(3))
+p1
+colorblind_vector <- colorRampPalette(c("#D51F26","#89288F", "blue","#CCCCCC", "#F47D2B"))
+slot(CD4T_integrated, "meta.data")$cloneType <- factor(slot(combined_D2, "meta.data")$cloneType,
+                levels = c("Hyperexpanded (100 < X <= 1000)", "Large (10 < X <= 100)",
+                            "Medium (5 < X <= 10)", "Small (1 < X <= 5)",
+                            "Single (0 < X <= 1)"))
+p2<-DimPlot(combined_D2, group.by = "cloneType") + scale_color_manual(values = colorblind_vector(6))
+p1+p2
+
+d2_clonotype <- as.data.frame(combined_D2$cloneType)
+d2_clonotype
+d2_TCRcluster <- as.data.frame(combined_D2$seurat_clusters)
+d2_clonotype_clusters<- cbind(d2_clonotype, d2_TCRcluster)
+d2_CTgene <- as.data.frame(combined_D1$CTgene)
+d2_clonotype_info<- cbind(d2_clonotype_clusters, d2_CTgene)
+names(d2_clonotype_info) <- make.names(names(d2_clonotype_info))
+write.table(d2_clonotype_info,"d2_clonotype_info.txt", sep= "\t", row.names = FALSE,quote= FALSE)
+
+
+#This block gives us counts of clonotype expansion per cluster data plotted in figure3d (Used graphpad prism for this plot )
+d2_expansionpercluster<- occupiedscRepertoire(combined_D2, x.axis = "seurat_clusters")
+d2_expansionpercluster <- as.data.frame(d2_expansionpercluster$data)
+d2_expansionpercluster
+write.table(d2_expansionpercluster,"d2_clonotype_expansion_table.txt", sep= "\t", row.names = FALSE,quote= FALSE)
+```
+
+
+```{r DLBCL3 data  , echo=FALSE}
+
+#Com
+d3_pt_vdj <- list(d3_clone)
+d3_pt_vdj
+d3_pt_vdj1  <- combineTCR(d3_pt_vdj, samples = c("ptg3"), ID = c("3"), cells ="T-AB")
+d3_pt_vdj1
+
+d3_pt_vdj1$ptg3_3$barcode <- gsub("_3","", d3_pt_vdj1$ptg3_3$barcode)
+d3_pt_vdj1
+
+combined_D3 = combineExpression(d3_pt_vdj1, CD4T_integrated, cloneCall="gene+nt",groupBy = "sample")
+combined_D3
+colorblind_vector <- colorRampPalette(c("#FF4B20", "#C6FDEC","#FFB433", "#7AC5FF","#0348A6", "black"))
+p1<-DimPlot(combined_D3, group.by = "HTO_classification") + NoLegend() +
+    scale_color_manual(values=colorblind_vector(3))
+p1
+colorblind_vector <- colorRampPalette(c("#D51F26","#89288F", "blue","#CCCCCC", "#F47D2B"))
+slot(CD4T_integrated, "meta.data")$cloneType <- factor(slot(combined_D3, "meta.data")$cloneType,
+                levels = c("Hyperexpanded (100 < X <= 1000)", "Large (10 < X <= 100)",
+                            "Medium (5 < X <= 10)", "Small (1 < X <= 5)",
+                            "Single (0 < X <= 1)"))
+p2<-DimPlot(combined_D3, group.by = "cloneType") + scale_color_manual(values = colorblind_vector(6))
+p1+p2
+
+d3_clonotype <- as.data.frame(combined_D3$cloneType)
+d3_clonotype
+d3_TCRcluster <- as.data.frame(combined_D3$seurat_clusters)
+d3_clonotype_clusters<- cbind(d3_clonotype, d3_TCRcluster)
+d3_CTgene <- as.data.frame(combined_D3$CTgene)
+d3_clonotype_info<- cbind(d3_clonotype_clusters, d3_CTgene)
+names(d3_clonotype_info) <- make.names(names(d3_clonotype_info))
+write.table(d3_clonotype_info,"d3_clonotype_info.txt", sep= "\t", row.names = FALSE,quote= FALSE)
+
+
+#This block gives us counts of clonotype expansion per cluster data plotted in figure3d (Used graphpad prism for this plot )
+d3_expansionpercluster<- occupiedscRepertoire(combined_D3, x.axis = "seurat_clusters")
+d3_expansionpercluster <- as.data.frame(d3_expansionpercluster$data)
+d3_expansionpercluster
+write.table(d3_expansionpercluster,"d3_clonotype_expansion_table.txt", sep= "\t", row.names = FALSE,quote= FALSE)
+```
+
+
+```{r FL1 data  , echo=FALSE}
+
+#Com
+fl1_pt_vdj <- list(fl1_clone)
+fl1_pt_vdj
+fl1_pt_vdj1  <- combineTCR(fl1_pt_vdj, samples = c("ptg1"), ID = c("1"), cells ="T-AB")
+fl1_pt_vdj1
+fl1_pt_vdj1$ptg1_1$barcode <- gsub("_1","", fl1_pt_vdj1$ptg1_1$barcode)
+
+fl1_pt_vdj1
+
+combined_FL1 = combineExpression(fl1_pt_vdj1, CD4T_integrated, cloneCall="gene+nt",groupBy = "sample")
+combined_FL1
+colorblind_vector <- colorRampPalette(c("#FF4B20", "#C6FDEC","#FFB433", "#7AC5FF","#0348A6", "black"))
+p1<-DimPlot(combined_FL1, group.by = "HTO_classification") + NoLegend() +
+    scale_color_manual(values=colorblind_vector(3))
+p1
+colorblind_vector <- colorRampPalette(c("#D51F26","#89288F", "blue","#CCCCCC", "#F47D2B"))
+slot(CD4T_integrated, "meta.data")$cloneType <- factor(slot(combined_FL1, "meta.data")$cloneType,
+                levels = c("Hyperexpanded (100 < X <= 1000)", "Large (10 < X <= 100)",
+                            "Medium (5 < X <= 10)", "Small (1 < X <= 5)",
+                            "Single (0 < X <= 1)"))
+p2<-DimPlot(combined_FL1, group.by = "cloneType") + scale_color_manual(values = colorblind_vector(6))
+p1+p2
+
+fl1_clonotype <- as.data.frame(combined_FL1$cloneType)
+fl1_clonotype
+fl1_TCRcluster <- as.data.frame(combined_FL1$seurat_clusters)
+fl1_clonotype_clusters<- cbind(fl1_clonotype, fl1_TCRcluster)
+fl1_CTgene <- as.data.frame(combined_FL1$CTgene)
+fl1_clonotype_info<- cbind(fl1_clonotype_clusters, fl1_CTgene)
+names(fl1_clonotype_info) <- make.names(names(fl1_clonotype_info))
+write.table(fl1_clonotype_info,"fl1_clonotype_info.txt", sep= "\t", row.names = FALSE,quote= FALSE)
+
+
+#This block gives us counts of clonotype expansion per cluster data plotted in figure3d (Used graphpad prism for this plot )
+fl1_expansionpercluster<- occupiedscRepertoire(combined_FL1, x.axis = "seurat_clusters")
+fl1_expansionpercluster <- as.data.frame(fl1_expansionpercluster$data)
+fl1_expansionpercluster
+write.table(fl1_expansionpercluster,"fl1_clonotype_expansion_table.txt", sep= "\t", row.names = FALSE,quote= FALSE)
+```
+
+```{r FL2 data  , echo=FALSE}
+#Com
+fl2_pt_vdj <- list(fl2_clone)
+fl2_pt_vdj
+fl2_pt_vdj1  <- combineTCR(fl2_pt_vdj, samples = c("ptg2"), ID = c("2"), cells ="T-AB")
+fl2_pt_vdj1
+fl2_pt_vdj1$ptg2_2$barcode <- gsub("_2","", fl2_pt_vdj1$ptg2_2$barcode)
+fl2_pt_vdj1
+
+combined_FL2 = combineExpression(fl2_pt_vdj1, CD4T_integrated, cloneCall="gene+nt",groupBy = "sample")
+combined_FL2
+colorblind_vector <- colorRampPalette(c("#FF4B20", "#C6FDEC","#FFB433", "#7AC5FF","#0348A6", "black"))
+p1<-DimPlot(combined_FL2, group.by = "HTO_classification") + NoLegend() +
+    scale_color_manual(values=colorblind_vector(3))
+p1
+colorblind_vector <- colorRampPalette(c("#D51F26","#89288F", "blue","#CCCCCC", "#F47D2B"))
+slot(CD4T_integrated, "meta.data")$cloneType <- factor(slot(combined_FL2, "meta.data")$cloneType,
+                levels = c("Hyperexpanded (100 < X <= 1000)", "Large (10 < X <= 100)",
+                            "Medium (5 < X <= 10)", "Small (1 < X <= 5)",
+                            "Single (0 < X <= 1)"))
+p2<-DimPlot(combined_FL2, group.by = "cloneType") + scale_color_manual(values = colorblind_vector(6))
+p1+p2
+
+fl2_clonotype <- as.data.frame(combined_FL2$cloneType)
+fl2_clonotype
+fl2_TCRcluster <- as.data.frame(combined_FL2$seurat_clusters)
+fl2_clonotype_clusters<- cbind(fl2_clonotype, fl2_TCRcluster)
+fl2_CTgene <- as.data.frame(combined_FL2$CTgene)
+fl2_clonotype_info<- cbind(fl2_clonotype_clusters, fl2_CTgene)
+names(fl2_clonotype_info) <- make.names(names(fl2_clonotype_info))
+write.table(fl2_clonotype_info,"fl2_clonotype_info.txt", sep= "\t", row.names = FALSE,quote= FALSE)
+
+
+#This block gives us counts of clonotype expansion per cluster data plotted in figure3d (Used graphpad prism for this plot )
+fl2_expansionpercluster<- occupiedscRepertoire(combined_FL2, x.axis = "seurat_clusters")
+fl2_expansionpercluster <- as.data.frame(fl2_expansionpercluster$data)
+fl2_expansionpercluster
+write.table(fl2_expansionpercluster,"fl2_clonotype_expansion_table.txt", sep= "\t", row.names = FALSE,quote= FALSE)
+```
+
+```{r FL3 data  , echo=FALSE}
+#Com
+fl3_pt_vdj <- list(fl3_clone)
+fl3_pt_vdj
+fl3_pt_vdj1  <- combineTCR(fl3_pt_vdj, samples = c("ptg3"), ID = c("3"), cells ="T-AB")
+fl3_pt_vdj1
+
+fl3_pt_vdj1$ptg3_3$barcode <- gsub("_3","", fl3_pt_vdj1$ptg3_3$barcode)
+fl3_pt_vdj1
+
+combined_FL3 = combineExpression(fl3_pt_vdj1, CD4T_integrated, cloneCall="gene+nt",groupBy = "sample")
+combined_FL3
+colorblind_vector <- colorRampPalette(c("#FF4B20", "#C6FDEC","#FFB433", "#7AC5FF","#0348A6", "black"))
+p1<-DimPlot(combined_FL3, group.by = "HTO_classification") + NoLegend() +
+    scale_color_manual(values=colorblind_vector(3))
+p1
+colorblind_vector <- colorRampPalette(c("#D51F26","#89288F", "blue","#CCCCCC", "#F47D2B"))
+slot(CD4T_integrated, "meta.data")$cloneType <- factor(slot(combined_FL3, "meta.data")$cloneType,
+                levels = c("Hyperexpanded (100 < X <= 1000)", "Large (10 < X <= 100)",
+                            "Medium (5 < X <= 10)", "Small (1 < X <= 5)",
+                            "Single (0 < X <= 1)"))
+p2<-DimPlot(combined_FL3, group.by = "cloneType") + scale_color_manual(values = colorblind_vector(6))
+p1+p2
+
+fl3_clonotype <- as.data.frame(combined_FL3$cloneType)
+fl3_clonotype
+fl3_TCRcluster <- as.data.frame(combined_FL3$seurat_clusters)
+fl3_clonotype_clusters<- cbind(fl3_clonotype, fl3_TCRcluster)
+fl3_CTgene <- as.data.frame(combined_FL3$CTgene)
+fl3_clonotype_info<- cbind(fl3_clonotype_clusters, fl3_CTgene)
+names(fl3_clonotype_info) <- make.names(names(fl3_clonotype_info))
+write.table(fl3_clonotype_info,"fl3_clonotype_info.txt", sep= "\t", row.names = FALSE,quote= FALSE)
+
+
+#This block gives us counts of clonotype expansion per cluster data plotted in figure3d (Used graphpad prism for this plot )
+fl3_expansionpercluster<- occupiedscRepertoire(combined_FL3, x.axis = "seurat_clusters")
+fl3_expansionpercluster <- as.data.frame(fl3_expansionpercluster$data)
+fl3_expansionpercluster
+write.table(fl3_expansionpercluster,"fl3_clonotype_expansion_table.txt", sep= "\t", row.names = FALSE,quote= FALSE)
+```
+
+
+```{r Tonsil1 data  , echo=FALSE}
+#Com
+T1_pt_vdj <- list(t1_clone)
+T1_pt_vdj
+T1_pt_vdj1  <- combineTCR(T1_pt_vdj, samples = c("ptg1"), ID = c("1"), cells ="T-AB")
+T1_pt_vdj1
+T1_pt_vdj1$ptg1_1$barcode <- gsub("_1","", T1_pt_vdj1$ptg1_1$barcode)
+
+T1_pt_vdj1
+
+combined_T1 = combineExpression(T1_pt_vdj1, CD4T_integrated, cloneCall="gene+nt",groupBy = "sample")
+combined_T1
+colorblind_vector <- colorRampPalette(c("#FF4B20", "#C6FDEC","#FFB433", "#7AC5FF","#0348A6", "black"))
+p1<-DimPlot(combined_T1, group.by = "HTO_classification") + NoLegend() +
+    scale_color_manual(values=colorblind_vector(3))
+p1
+colorblind_vector <- colorRampPalette(c("#D51F26","#89288F", "blue","#CCCCCC", "#F47D2B"))
+slot(CD4T_integrated, "meta.data")$cloneType <- factor(slot(combined_T1, "meta.data")$cloneType,
+                levels = c("Hyperexpanded (100 < X <= 1000)", "Large (10 < X <= 100)",
+                            "Medium (5 < X <= 10)", "Small (1 < X <= 5)",
+                            "Single (0 < X <= 1)"))
+p2<-DimPlot(combined_T1, group.by = "cloneType") + scale_color_manual(values = colorblind_vector(6))
+p1+p2
+
+T1_clonotype <- as.data.frame(combined_T1$cloneType)
+T1_clonotype
+T1_TCRcluster <- as.data.frame(combined_T1$seurat_clusters)
+T1_clonotype_clusters<- cbind(T1_clonotype, T1_TCRcluster)
+T1_CTgene <- as.data.frame(combined_T1$CTgene)
+T1_clonotype_info<- cbind(T1_clonotype_clusters, T1_CTgene)
+names(T1_clonotype_info) <- make.names(names(T1_clonotype_info))
+write.table(T1_clonotype_info,"T1_clonotype_info.txt", sep= "\t", row.names = FALSE,quote= FALSE)
+
+
+#This block gives us counts of clonotype expansion per cluster data plotted in figure3d (Used graphpad prism for this plot )
+T1_expansionpercluster<- occupiedscRepertoire(combined_T1, x.axis = "seurat_clusters")
+T1_expansionpercluster <- as.data.frame(T1_expansionpercluster$data)
+T1_expansionpercluster
+write.table(T1_expansionpercluster,"T1_clonotype_expansion_table.txt", sep= "\t", row.names = FALSE,quote= FALSE)
+
+```
+
+
+
+```{r Tonsi12 data  , echo=FALSE}
+#Com
+T2_pt_vdj <- list(t2_clone)
+T2_pt_vdj
+T2_pt_vdj1  <- combineTCR(T2_pt_vdj, samples = c("ptg2"), ID = c("2"), cells ="T-AB")
+T2_pt_vdj1
+
+T2_pt_vdj1$ptg2_2$barcode <- gsub("_2","", T2_pt_vdj1$ptg2_2$barcode)
+T2_pt_vdj1
+
+combined_T2 = combineExpression(T2_pt_vdj1, CD4T_integrated, cloneCall="gene+nt",groupBy = "sample")
+combined_T2
+colorblind_vector <- colorRampPalette(c("#FF4B20", "#C6FDEC","#FFB433", "#7AC5FF","#0348A6", "black"))
+p1<-DimPlot(combined_T2, group.by = "HTO_classification") + NoLegend() +
+    scale_color_manual(values=colorblind_vector(3))
+p1
+colorblind_vector <- colorRampPalette(c("#D51F26","#89288F", "blue","#CCCCCC", "#F47D2B"))
+slot(CD4T_integrated, "meta.data")$cloneType <- factor(slot(combined_T2, "meta.data")$cloneType,
+                levels = c("Hyperexpanded (100 < X <= 1000)", "Large (10 < X <= 100)",
+                            "Medium (5 < X <= 10)", "Small (1 < X <= 5)",
+                            "Single (0 < X <= 1)"))
+p2<-DimPlot(combined_T2, group.by = "cloneType") + scale_color_manual(values = colorblind_vector(6))
+p1+p2
+
+T2_clonotype <- as.data.frame(combined_T2$cloneType)
+T2_clonotype
+T2_TCRcluster <- as.data.frame(combined_T2$seurat_clusters)
+T2_clonotype_clusters<- cbind(T2_clonotype, T2_TCRcluster)
+T2_CTgene <- as.data.frame(combined_T2$CTgene)
+T2_clonotype_info<- cbind(T2_clonotype_clusters, T2_CTgene)
+names(T2_clonotype_info) <- make.names(names(T2_clonotype_info))
+write.table(T2_clonotype_info,"T2_clonotype_info.txt", sep= "\t", row.names = FALSE,quote= FALSE)
+
+
+#This block gives us counts of clonotype expansion per cluster data plotted in figure3d (Used graphpad prism for this plot )
+T2_expansionpercluster<- occupiedscRepertoire(combined_T2, x.axis = "seurat_clusters")
+T2_expansionpercluster <- as.data.frame(T2_expansionpercluster$data)
+T2_expansionpercluster
+write.table(T2_expansionpercluster,"T2_clonotype_expansion_table.txt", sep= "\t", row.names = FALSE,quote= FALSE)
+```
+
+```{r Tonsil3 data  , echo=FALSE}
+#Com
+T3_pt_vdj <- list(t3_clone)
+T3_pt_vdj
+T3_pt_vdj1  <- combineTCR(T3_pt_vdj, samples = c("ptg3"), ID = c("3"), cells ="T-AB")
+T3_pt_vdj1
+
+T3_pt_vdj1$ptg3_3$barcode <- gsub("_3","", T3_pt_vdj1$ptg3_3$barcode)
+T3_pt_vdj1
+
+combined_T3 = combineExpression(T3_pt_vdj1, CD4T_integrated, cloneCall="gene+nt",groupBy = "sample")
+combined_T3
+colorblind_vector <- colorRampPalette(c("#FF4B20", "#C6FDEC","#FFB433", "#7AC5FF","#0348A6", "black"))
+p1<-DimPlot(combined_T3, group.by = "HTO_classification") + NoLegend() +
+    scale_color_manual(values=colorblind_vector(3))
+p1
+colorblind_vector <- colorRampPalette(c("#D51F26","#89288F", "blue","#CCCCCC", "#F47D2B"))
+slot(CD4T_integrated, "meta.data")$cloneType <- factor(slot(combined_T3, "meta.data")$cloneType,
+                levels = c("Hyperexpanded (100 < X <= 1000)", "Large (10 < X <= 100)",
+                            "Medium (5 < X <= 10)", "Small (1 < X <= 5)",
+                            "Single (0 < X <= 1)"))
+p2<-DimPlot(combined_T3, group.by = "cloneType") + scale_color_manual(values = colorblind_vector(6))
+p1+p2
+
+T3_clonotype <- as.data.frame(combined_T3$cloneType)
+T3_clonotype
+T3_TCRcluster <- as.data.frame(combined_T3$seurat_clusters)
+T3_clonotype_clusters<- cbind(T3_clonotype, T3_TCRcluster)
+T3_CTgene <- as.data.frame(combined_T3$CTgene)
+T3_clonotype_info<- cbind(T3_clonotype_clusters, T3_CTgene)
+names(T3_clonotype_info) <- make.names(names(T3_clonotype_info))
+write.table(T3_clonotype_info,"T3_clonotype_info.txt", sep= "\t", row.names = FALSE,quote= FALSE)
+
+
+#This block gives us counts of clonotype expansion per cluster data plotted in figure3d (Used graphpad prism for this plot )
+T3_expansionpercluster<- occupiedscRepertoire(combined_T3, x.axis = "seurat_clusters")
+T3_expansionpercluster <- as.data.frame(T3_expansionpercluster$data)
+T3_expansionpercluster
+write.table(T3_expansionpercluster,"T3_clonotype_expansion_table.txt", sep= "\t", row.names = FALSE,quote= FALSE)
+
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.

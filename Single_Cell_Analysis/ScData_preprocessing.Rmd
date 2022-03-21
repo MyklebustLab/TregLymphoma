@@ -1,0 +1,331 @@
+---
+title: "SCT-rna_SCT_adt"
+Authors: Ankush Sharma and Ivana Spasevska
+output:
+  html_document:
+    keep_md: yes
+    theme: united
+  pdf_document: default
+---
+
+#This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook.
+
+```{r setup, message=FALSE, warning=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+Sys.setenv('R_MAX_VSIZE'=1600000)
+invisible(utils::memory.limit(100000))
+```
+
+#R libraries
+```{r Libraries, message=FALSE, warning=FALSE}
+
+#if (!requireNamespace("devtools", quietly = TRUE)) install.packages("devtools")
+# Libraries
+library(markdown)
+library(AnnotationHub)
+library(clustree)
+library(cowplot)
+library(ensembldb)
+library(ggthemes)
+library(ggplot2)
+library(ggplotify)
+library(gridGraphics)
+library(Matrix)
+library(org.Hs.eg.db)
+library(Matrix.utils)
+library(patchwork)
+library(reticulate)
+library(reshape2)
+library(RCurl)
+library(scCATCH)
+library(scales)
+library(scater)
+library(Seurat)
+library(SeuratDisk)
+library(SingleCellExperiment)
+library(SummarizedExperiment)
+library(EnsDb.Hsapiens.v86)
+library(BSgenome.Hsapiens.UCSC.hg38)
+library(chromVAR)
+library(tidyverse)
+library(edgeR)
+library(plotly)
+library(robustbase)
+library(knitr)
+
+# Extra
+library(kableExtra) #load after dplyr
+library(VISION)
+#library(dyno)
+# library(JASPAR2018)
+# library(TFBSTools)
+# library(Signac)
+
+```
+
+
+#Import datasets, and other settings
+```{r Datasets run1, message=FALSE, warning=FALSE}
+# Path and name
+set.seed(1234)
+currentjob <- "QC_control_2201"
+dirname1<- "~/Desktop/scRNAseq/1/outs/filtered_feature_bc_matrix"
+#dirname1<- "~/Desktop/treg_scrna/scRNA/scrna_d1/outs/filtered_feature_bc_matrix/"
+
+# Settings for the current run
+# scRNAseq - Initialize the Seurat object with the raw (non-normalized data).
+rnaobjects.data1 <- Read10X(data.dir = dirname1)
+Run1 <- CreateSeuratObject(counts = rnaobjects.data1$`Gene Expression`, 
+                           min.cells = 3, 
+                           min.features = 200, 
+                           project = "ptg1",
+                           assay = "RNA",
+                           names.delim = "-")
+
+
+
+########################
+#Normalize RNA data with log normalization
+Run1.RNA<- NormalizeData(Run1)
+
+#Find and scale variable features
+Run1.RNA <- FindVariableFeatures(Run1.RNA, selection.method = "mean.var.plot")
+Run1.RNA <- ScaleData(Run1.RNA, features = VariableFeatures(Run1.RNA))
+#######################
+####
+#Add HTO data as a new assay independent from RNA
+Run1.RNA[["HTO"]] <- CreateAssayObject(rnaobjects.data1$`Antibody Capture`[1:3,][, colnames(x = Run1.RNA)])
+
+# Normalize HTO data, here we use centered log-ratio (CLR) transformation
+Run1.RNA <- NormalizeData(Run1.RNA, assay = "HTO", normalization.method = "CLR")
+
+
+#Demultiplexing data beased on HTO.positive quantile of 0.99
+Run1.RNA <- HTODemux(Run1.RNA, assay = "HTO", positive.quantile = 0.99)
+
+#Visualize demultiplexing results
+table(Run1.RNA$HTO_classification.global)
+Idents(Run1.RNA) <- "HTO_maxID"
+RidgePlot(Run1.RNA, assay = "HTO", features = rownames(Run1.RNA[["HTO"]])[1:3], ncol = 3)
+FeatureScatter(Run1.RNA, feature1 = "hto_C251-FL", feature2 = "hto_C252-DLBCL")
+FeatureScatter(Run1.RNA, feature1 = "hto_C251-FL", feature2 = "hto_C253-Tonsil")
+FeatureScatter(Run1.RNA, feature1 = "hto_C252-DLBCL", feature2 = "hto_C253-Tonsil")
+
+Idents(Run1.RNA) <- "HTO_classification.global"
+
+VlnPlot(Run1.RNA, features = "nCount_RNA", pt.size = 0.1, log = TRUE)
+
+rownames(x = rnaobjects.data1[["Antibody Capture"]]) <- gsub(pattern = "_[control_]*TotalSeqC", replacement = "", x = rownames(x = rnaobjects.data1[["Antibody Capture"]]))
+
+rnaobject1<- subset(Run1.RNA, idents = "Singlet")
+```
+
+```{r Datasets run2, message=FALSE, warning=FALSE}
+
+###
+dirname2<- "/Users/ivanaspa/Desktop/scRNAseq/2/outs/filtered_feature_bc_matrix"
+#dirname2<- "/Users/ankushs/Desktop/treg_scrna/scRNA/scrna_d2/outs/filtered_feature_bc_matrix/"
+
+rnaobjects.data2 <- Read10X(data.dir = dirname2)
+
+Run2 <- CreateSeuratObject(counts = rnaobjects.data2$`Gene Expression`, 
+                           min.cells = 3, 
+                           min.features = 200, 
+                           project = "ptg2",
+                           assay = "RNA",
+                           names.delim = "-")
+
+
+########################
+#Normalize RNA data with log normalization
+Run2.RNA<- NormalizeData(Run2)
+
+#Find and scale variable features
+Run2.RNA <- FindVariableFeatures(Run2.RNA, selection.method = "mean.var.plot")
+Run2.RNA <- ScaleData(Run2.RNA, features = VariableFeatures(Run2.RNA))
+#######################
+####
+#Add HTO data as a new assay independent from RNA
+Run2.RNA[["HTO"]] <- CreateAssayObject(rnaobjects.data2$`Antibody Capture`[1:3,][, colnames(x = Run2.RNA)])
+
+# Normalize HTO data, here we use centered log-ratio (CLR) transformation
+
+Run2.RNA <- NormalizeData(Run2.RNA, assay = "HTO", normalization.method = "CLR")
+
+
+#Demultiplexing data beased on HTO
+Run2.RNA <- HTODemux(Run2.RNA, assay = "HTO", positive.quantile = 0.99)
+
+#Visualize demultiplexing results
+table(Run2.RNA$HTO_classification.global)
+Idents(Run2.RNA) <- "HTO_maxID"
+RidgePlot(Run2.RNA, assay = "HTO", features = rownames(Run2.RNA[["HTO"]])[1:3], ncol = 3)
+FeatureScatter(Run2.RNA, feature1 = "hto_C251-FL", feature2 = "hto_C252-DLBCL")
+FeatureScatter(Run2.RNA, feature1 = "hto_C251-FL", feature2 = "hto_C253-Tonsil")
+FeatureScatter(Run2.RNA, feature1 = "hto_C252-DLBCL", feature2 = "hto_C253-Tonsil")
+
+Idents(Run2.RNA) <- "HTO_classification.global"
+
+VlnPlot(Run2.RNA, features = "nCount_RNA", pt.size = 0.1, log = TRUE)
+
+rownames(x = rnaobjects.data2[["Antibody Capture"]]) <- gsub(pattern = "_[control_]*TotalSeqC", replacement = "", x = rownames(x = rnaobjects.data2[["Antibody Capture"]]))
+
+rnaobject2 <- subset(Run2.RNA, idents = "Singlet")
+```
+
+```{r Datasets run2, message=FALSE, warning=FALSE}
+dirname3 <- "/Users/ivanaspa/Desktop/scRNAseq/3/outs/filtered_feature_bc_matrix"
+
+#dirname3 <- "/Users/ankushs/Desktop/treg_scrna/scRNA/scrna_d3/outs/filtered_feature_bc_matrix/"
+
+rnaobjects.data3 <- Read10X(data.dir = dirname3)
+
+Run3 <- CreateSeuratObject(counts = rnaobjects.data3$`Gene Expression`, 
+                           min.cells = 3, 
+                           min.features = 200, 
+                           project = "ptg3",
+                           assay = "RNA",
+                           names.delim = "-")
+
+
+########################
+#Normalize RNA data with log normalization
+Run3.RNA<- NormalizeData(Run3)
+
+#Find and scale variable features
+Run3.RNA <- FindVariableFeatures(Run3.RNA, selection.method = "mean.var.plot")
+Run3.RNA <- ScaleData(Run3.RNA, features = VariableFeatures(Run3.RNA))
+#######################
+####
+#Add HTO data as a new assay independent from RNA
+Run3.RNA[["HTO"]] <- CreateAssayObject(rnaobjects.data3$`Antibody Capture`[1:3,][, colnames(x = Run3.RNA)])
+
+# Normalize HTO data, here we use centered log-ratio (CLR) transformation
+
+Run3.RNA <- NormalizeData(Run3.RNA, assay = "HTO", normalization.method = "CLR")
+
+
+#Demultiplexing data beased on HTO
+Run3.RNA <- HTODemux(Run3.RNA, assay = "HTO", positive.quantile = 0.99)
+
+#Visualize demultiplexing results
+table(Run3.RNA$HTO_classification.global)
+Idents(Run3.RNA) <- "HTO_maxID"
+RidgePlot(Run3.RNA, assay = "HTO", features = rownames(Run3.RNA[["HTO"]])[1:3], ncol = 3)
+FeatureScatter(Run3.RNA, feature1 = "hto_C251-FL", feature2 = "hto_C252-DLBCL")
+FeatureScatter(Run3.RNA, feature1 = "hto_C251-FL", feature2 = "hto_C253-Tonsil")
+FeatureScatter(Run3.RNA, feature1 = "hto_C252-DLBCL", feature2 = "hto_C253-Tonsil")
+
+Idents(Run3.RNA) <- "HTO_classification.global"
+
+VlnPlot(Run3.RNA, features = "nCount_RNA", pt.size = 0.1, log = TRUE)
+
+rownames(x = rnaobjects.data3[["Antibody Capture"]]) <- gsub(pattern = "_[control_]*TotalSeqC", replacement = "", x = rownames(x = rnaobjects.data3[["Antibody Capture"]]))
+
+rnaobject3 <- subset(Run3.RNA, idents = "Singlet")
+```
+
+```{r Datasets Merged, message=FALSE, warning=FALSE}
+# mergeing  ADTs  from column Antibody Capture`[4:11,]
+rnaobject1[["ADT"]] <- CreateAssayObject(rnaobjects.data1$`Antibody Capture`[4:11,][, colnames(x = rnaobject1)])
+
+rnaobject2[["ADT"]] <- CreateAssayObject(rnaobjects.data2$`Antibody Capture`[4:11,][, colnames(x = rnaobject2)])
+
+rnaobject3[["ADT"]] <- CreateAssayObject(rnaobjects.data3$`Antibody Capture`[4:11,][, colnames(x = rnaobject3)])
+
+#we cannot use sctransform yet on ADT´s and HTO´s , as it skewing the data towards negative cells 
+adt.combined <- merge(rnaobject1, y = c(rnaobject2, rnaobject3), add.cell.ids = c("ptg1","ptg2","ptg3"), project = "Merged_Runs")
+
+#Normalizing using method CLR and scaling 
+rnaobjects <- NormalizeData(adt.combined, assay = "ADT", normalization.method = "CLR")
+rnaobjects <- ScaleData(rnaobjects, assay = "ADT")
+rnaobjects
+
+
+```
+
+
+```{r Datasets Normalization, message=FALSE, warning=FALSE}
+Sys.setenv('R_MAX_VSIZE'=1600000)
+#Demultiplexing data based on HTO
+  rnaobjects <- HTODemux(rnaobjects, assay = "HTO", positive.quantile = 0.99)
+
+#Visualize demultiplexing results
+  table(rnaobjects$HTO_classification.global)
+  Idents(rnaobjects) <- "HTO_maxID"
+  RidgePlot(rnaobjects, assay = "HTO", features = rownames(rnaobjects[["HTO"]])[1:3], ncol = 3)
+  FeatureScatter(rnaobjects, feature1 = "hto_C251-FL", feature2 = "hto_C252-DLBCL")
+  FeatureScatter(rnaobjects, feature1 = "hto_C251-FL", feature2 = "hto_C253-Tonsil")
+  FeatureScatter(rnaobjects, feature1 = "hto_C252-DLBCL", feature2 = "hto_C253-Tonsil")
+
+  Idents(rnaobjects) <- "HTO_classification.global"
+  VlnPlot(rnaobjects, features = "nCount_RNA", pt.size = 0.1, log = TRUE)
+  CD4T <- subset(rnaobjects, idents = "Singlet")
+  dim(CD4T)
+
+
+```
+
+
+
+```{r QCPLOTS2 , message=FALSE, warning=FALSE}
+#Removing no longer neccessary objects 
+
+rm(Run1)
+rm(Run2)
+rm(Run3)
+rm(adt.combined)
+rm(rnaobject1)
+rm(rnaobject2)
+rm(rnaobject3)
+rm(rnaobjects.data3)
+rm(rnaobjects.data2)
+rm(rnaobjects.data1)
+rm(Run1.RNA)
+rm(Run2.RNA)
+rm(Run3.RNA)
+rm(rnaobjects)
+rm(RNAobject)
+rm(Run1.HTO)
+rm(Run2.HTO)
+rm(Run3.HTO)
+rm(Run.HTO)
+rm (hto.combined)
+```
+
+
+
+#Regression, but no filtering yet (QC metrics evaluated again later in script)!
+```{r Percentage feature set, message=FALSE, warning=FALSE}
+# Add mitochondrial gene % information
+CD4T <- PercentageFeatureSet(CD4T, pattern = "^MT-", col.name = "percent.mt")
+
+# Plot QC metrics for dataset (unfiltered)
+VlnPlot(CD4T, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3,pt.size = 0.1, combine = TRUE)
+
+#selecting cells with number of genes expressedgreater than 600 , number of RNA read counts between 1500 to 25000 and percent mitochondrial genes less than 9 %
+CD4T <- subset(CD4T, subset = nFeature_RNA > 600  & nCount_RNA >= 1500  & nCount_RNA < 25000 & percent.mt < 9)
+VlnPlot(CD4T, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3,pt.size = 0.1, combine = TRUE)
+dim (CD4T)
+
+```
+
+
+```{r CC Scoring, message=FALSE, warning=FALSE}
+# Import cell cycle (cc) genes stored in Seurat then do cc scoring on dataset
+# As an alternative to completely removing cell-cycle signal this workflow regress out the difference between the G2M and S-phase scores. Seurat recommends this for differentiating cells and it was best in tests.
+s.genes <- cc.genes.updated.2019$s.genes
+g2m.genes <- cc.genes.updated.2019$g2m.genes
+CD4T <- CellCycleScoring(CD4T, s.features = s.genes, g2m.features = g2m.genes, set.ident = TRUE)
+CD4T$CC.Difference <- CD4T$S.Score - CD4T$G2M.Score
+
+# Visualize the distribution of cell cycle markers across
+RidgePlot(CD4T, features = c("PCNA", "TOP2A", "MCM6", "MKI67","STIM1"), ncol = 2)
+
+```
+
+
+```{r save rds, message=FALSE, warning=FALSE}
+# Save final RDS and countfile (files 1 of 2, unfiltered)
+saveRDS(CD4T, file = paste0(currentjob,"Part1_Singlets_merged_QCFiltered.rds"))
+```

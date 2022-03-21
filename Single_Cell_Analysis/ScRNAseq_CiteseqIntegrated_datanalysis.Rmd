@@ -1,0 +1,692 @@
+---
+title: "SCT-rna_SCT_adt"
+Authors: Ankush Sharma and Ivana Spasevska
+output:
+  html_document:
+    keep_md: yes
+    theme: united
+  pdf_document: default
+---
+
+#This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook.
+
+```{r setup, message=FALSE, warning=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+Sys.setenv('R_MAX_VSIZE'=1600000)
+invisible(utils::memory.limit(100000))
+# Memory
+options(future.globals.maxSize = 8000 * 2024^5) #Set a higher maximum memory size
+
+# Seed (set for reproducibility)
+set.seed(1234)
+
+# Increase threshold before R starts showing scientific notation
+options(scipen = 10L)
+```
+
+#R libraries
+```{r Libraries, message=FALSE, warning=FALSE}
+# Libraries
+library(plyr)
+library(dplyr)
+library(markdown)
+library(AnnotationHub)
+library(clustree)
+library(cowplot)
+library(ensembldb)
+library(ggthemes)
+library(ggplot2)
+library(ggplotify)
+library(gridGraphics)
+library(Matrix)
+library(org.Hs.eg.db)
+library(Matrix.utils)
+library(patchwork)
+library(reticulate)
+library(reshape2)
+library(RCurl)
+library(scCATCH)
+library(scales)
+library(scater)
+library(Seurat)
+library(SeuratDisk)
+library(SingleCellExperiment)
+library(SummarizedExperiment)
+library(EnsDb.Hsapiens.v86)
+library(BSgenome.Hsapiens.UCSC.hg38)
+library(chromVAR)
+library(tidyverse)
+library(edgeR)
+library(plotly)
+library(robustbase)
+library(knitr)
+library(RColorBrewer)
+
+# Extra
+library(kableExtra) #load after dplyr
+library(VISION)
+#library(dyno)
+# library(JASPAR2018)
+# library(TFBSTools)
+# library(Signac)
+library(RColorBrewer)
+```
+
+```{R load rsd file from first part , message=FALSE, warning=FALSE}
+CD4T_integrated<-readRDS("Final scripts/Part1_Singlets_merged_QCFiltered.rds")
+
+```
+
+```{r integration, message=FALSE, warning=FALSE, include=FALSE}
+##RUN RNA FOR WNN
+DefaultAssay(CD4T) <- 'RNA'
+CD4T <- SCTransform(CD4T, vars.to.regress = c("percent.mt","CC.Difference"))
+CD4T <- FindVariableFeatures(CD4T, selection.method = "vst", nfeatures = 10000, assay="RNA")
+top10 <- head(VariableFeatures(CD4T), 10)
+CD4T <- ScaleData(CD4T)
+CD4T<- RunPCA(CD4T, features = VariableFeatures(object = CD4T, verbose = FALSE))
+print(CD4T[["pca"]], dims = 1:20, nfeatures = 5)
+VizDimLoadings(CD4T, dims = 1:20, reduction = "pca")
+DimPlot(CD4T, reduction = "pca")
+DimHeatmap(CD4T, dims = 1:20, cells = 500, balanced = TRUE)
+```
+
+
+
+```{r integration, message=FALSE, warning=FALSE, include=FALSE}
+
+###WNN ADT Plots 
+DefaultAssay(CD4T) <- 'ADT'
+VariableFeatures(CD4T) <- rownames(CD4T[["ADT"]])
+
+CD4T <- SCTransform(CD4T,) %>% ScaleData() %>% RunPCA(reduction.name = 'apca')
+
+
+  CD4T_integrated <- FindMultiModalNeighbors(
+  CD4T, reduction.list = list("pca", "apca"), 
+  dims.list = list(1:20, 1:10), modality.weight.name = "RNA.weight", verbose = TRUE
+)
+
+  CD4T_integrated <- RunUMAP(CD4T_integrated, nn.name = "weighted.nn", reduction.name = "wnn.umap", reduction.key = "wnnUMAP_")
+
+```
+
+```{r integration, message=FALSE, warning=FALSE, include=FALSE}
+  currentjob="wsnn"
+
+CD4T_integrated <- FindClusters(CD4T_integrated, graph.name = "wsnn", algorithm = 2, resolution = c(0.1,0.2,0.3,0.4,0.45,0.5,0.55,0.6,0.7,0.8,0.9,1), verbose = FALSE)
+
+CD4T_integrated <- RunUMAP(CD4T_integrated, dims = 1:20, verbose = FALSE)
+#Clustree plots
+clustree(CD4T_integrated, prefix="_res.", use_core_edges=TRUE, label=T)
+dev.copy(pdf,paste0(currentjob,"_Clustree.pdf"), height=12, width=8)
+dev.off()
+
+clustree_overlay(CD4T_integrated, x_value = "umap1", y_value = "umap2", red_dim = "umap", prefix="wsnn_res.")
+dev.copy(pdf,paste0(currentjob,"_.ClustreeOverlay.pdf"), height=5, width=12)
+dev.off()
+```
+
+```{r integration, message=FALSE, warning=FALSE, include=FALSE}
+
+#louvain with multiple refinements 
+CD4T_integrated <- FindClusters(CD4T_integrated, graph.name = "wsnn", algorithm = 2, resolution = 0.6, verbose = FALSE)
+
+
+p1 <- DimPlot(CD4T_integrated, reduction = 'wnn.umap',group.by = 'ident', label = TRUE, repel = TRUE, label.size = 4, pt.size = 1, cols = c('0' = '#D37295', '1' = '#37A484', '2' = '#8175aa', '3' = '#F28E2B','4' = '#B60A1C','5' = '#8CC2CA', '6' = '#52307C', '7' = '#C3CE3D', '8' = '#8A494D', '9' = '#305691', '10' = '#59A14F','11' = '#ffd700','12' = '#a3acb9'))
+
+p1
+pdf(file = paste0(currentjob,"_integ.UMAP_wnn.pdf"), width=13, height=10, paper='special')
+p1
+
+
+```
+
+
+```{r Annotation, message=FALSE, warning=FALSE}
+
+Idents(CD4T_integrated) <- "seurat_clusters"
+fil.cluster.ids <- c("Naive","Cytotoxic", "Memory_1", "Memory_2", "actTregs", "Thelpers", "Tfh_1", "Tfh_2", "Memory_3", "nTregs", "LAG3_Tregs", "Proliferating", "Other")
+
+names(fil.cluster.ids) <- levels(CD4T_integrated)
+CD4T_integrated <- RenameIdents(CD4T_integrated, fil.cluster.ids)
+names(fil.cluster.ids) <- levels(CD4T_integrated)
+
+p2 <- DimPlot(CD4T_integrated, reduction = 'wnn.umap', label = FALSE, repel = TRUE, label.size = 7,  pt.size = 1, cols = c('#D37295','#37A484', '#8175AA', '#F28E2B', '#B60A1C', '#8CC2CA', '#52307C', '#C3CE3D', '#8A494D', '#305691',  '#59A14F','#FFD700', '#A3ACB9'))
+
+p2 
+pdf(file = paste0(currentjob,"_integ.UMAP_wnn_annotated-red.pdf"), width=25, height=10, paper='special')
+p2 
+#dev.off()
+#dev.set(dev.next())
+```
+
+```{r integration, message=FALSE, warning=FALSE, include=FALSE}
+
+CD4T_integrated <- RunUMAP(CD4T_integrated , reduction = 'pca', dims = 1:30, assay = 'RNA', 
+              reduction.name = 'umap')
+CD4T_integrated  <- RunUMAP(CD4T_integrated , reduction = 'apca', dims = 1:10, assay = 'ADT', 
+              reduction.name = 'adt.umap', reduction.key = 'adtUMAP_')
+
+
+
+p3 <- DimPlot(CD4T_integrated, reduction = 'umap', group.by = 'ident', label = FALSE, 
+              repel = TRUE, label.size = 6, pt.size = 1, cols = c('#D37295','#37A484', '#8175AA', '#F28E2B', '#B60A1C', '#8CC2CA', '#52307C', '#C3CE3D', '#8A494D', '#305691',  '#59A14F','#FFD700', '#A3ACB9'))
+p4 <- DimPlot(CD4T_integrated, reduction = 'adt.umap', group.by = 'ident', label = FALSE, repel = TRUE, label.size = 6, pt.size = 1, cols = c('#D37295','#37A484', '#8175AA', '#F28E2B', '#B60A1C', '#8CC2CA', '#52307C', '#C3CE3D', '#8A494D', '#305691',  '#59A14F','#FFD700', '#A3ACB9'))
+
+p3 + p4
+pdf(file = paste0(currentjob,"_integ.UMAP_RNA_ADT.pdf"), width=25, height=10, paper='special')
+p3 + p4
+
+
+```
+
+```{r save rds, message=FALSE, warning=FALSE}
+# Save final RDS and countfile (files 1 of 2, unfiltered)
+saveRDS(CD4T_integrated, file = paste0(currentjob,"Part2_Clustering.rds"))
+```
+
+```{r ????}
+# Save
+
+actTregs.markers <- FindMarkers(CD4T_integrated, ident.1 = "actTregs", logfc.threshold = 0.25, test.use = "roc", only.pos = TRUE)
+
+actTregs<- tibble::rownames_to_column(actTregs.markers, "Gene")
+actTregs<-as.list(actTregs$Gene)
+
+nTregs.markers <- FindMarkers(CD4T_integrated, ident.1 = "nTregs", logfc.threshold = 0.25, test.use = "roc", only.pos = TRUE)
+
+nTregs<- tibble::rownames_to_column(nTregs.markers, "Gene")
+nTregs<-as.list(nTregs$Gene)
+
+actTregs <- Tregs.integrated.markers1 %>% top_n(n = 100, wt = avg_log2FC)
+nTregs<- Tregs.integrated.markers2 %>% group_by(cluster) %>% top_n(n = 100, wt = avg_log2FC)
+LAG3 <- Tregs.integrated.markers3 %>% group_by(cluster) %>% top_n(n = 100, wt = avg_log2FC)
+
+write.table(Tregsall, "Tregs_DEG.csv", sep = "\t", quote=F, row.names=F) 
+
+```
+
+
+```{r PLOTS NOT USED, message=FALSE, warning=FALSE, include=FALSE}
+
+
+QC<- VlnPlot(CD4T_integrated, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3,pt.size = 0, combine = TRUE, cols = c('#D37295','#37A484', '#8175AA', '#F28E2B', '#B60A1C', '#8CC2CA', '#52307C', '#C3CE3D', '#8A494D', '#305691',  '#59A14F','#FFD700', '#A3ACB9'))
+
+QC
+pdf(file = paste0(currentjob,"_filt_QCplot.pdf"), width=12, height=7, paper='special')
+QC
+#dev.off()
+```  
+
+```{r Heatmap: Top10 genes per Cluster, message=FALSE, warning=FALSE}
+ 
+DefaultAssay(CD4T_integrated) <- 'SCT'
+
+CD4T.integrated.markersRNA <- FindAllMarkers(
+  CD4T_integrated,
+  only.pos = F,
+  min.pct = 0.1,
+  logfc.threshold = 0.25
+  )
+
+top50 <- CD4T.integrated.markersRNA %>% group_by(cluster) %>% top_n(n = 50, wt = avg_log2FC)
+write.table(top50, paste0(currentjob,"_C.Top50-cluster-markersRNA.csv"))
+
+
+top10RNA <- CD4T.integrated.markersRNA %>% group_by(cluster) %>% top_n(n = 10, wt = avg_log2FC)
+
+p11<- DoHeatmap(CD4T_integrated, features = top10RNA$gene) 
+p11
+pdf(file = paste0(currentjob,"_integrated.heatmap.Top10-cluster-markersRNA.pdf"), width=12, height=14, paper='special')
+p11
+dev.off()
+
+```  
+
+```{r Dotplots, message=FALSE, warning=FALSE}
+# Save final RDS and countfile (files 1 of 2, unfiltered)
+DefaultAssay(CD4T_integrated) <- 'SCT'
+clusters<- CD4T_integrated
+clusters@active.ident <- factor(clusters@active.ident, 
+                            levels = c("Other", "Proliferating", "Cytotoxic", "Thelpers","Tfh_2", "Tfh_1","Memory_3", "Memory_2", "Memory_1", "Naive",  "LAG3_Tregs", "nTregs",  "actTregs"))
+
+markers.to.plot <- c("MKI67", "STMN1",
+                     "GZMA","CST7","CCL5", "NKG7", "GZMK",
+                     "KLF6", "CXCR4",
+                     "ITM2A","TNF", "TOX", "CXCL13", "CH25H", "TOX2", "CXCR5", "PDCD1",
+                     "MYADM", "FOSB", "EGR1", "NR4A1",
+                     "SELL", "CD69", "IL7R", "ANXA1",
+                     "LEF1", "CD55", "NOSIP", "CCR7", "KLF2",
+                     "IL10", "CTLA4","KLRB1", "LGMN", "LAG3", 
+                     "IKZF22", "HSPA1B", "HSPA1A", "S100A6","S100A4", 
+                     "IL32","MIR4435−2HG","IL2RA", "TNFRSF18","FOXP3")
+  
+p12<- DotPlot(clusters, features = rev(markers.to.plot), cols = c("lightgray", "darkblue")) + RotatedAxis()
+
+pdf(file = paste0(currentjob,"dotplot.pdf"), width=18, height=6, paper='special')
+p12
+dev.off()
+
+
+                   
+adt.to.plot <- c("adt_CD45RA", "adt_CD185", "adt_CD279", "adt_CD278","adt_CD134", "adt_TIGIT","adt_CD127", "adt_CD25")
+p13<- DotPlot(clusters, features = rev(adt.to.plot),assay = "ADT", scale.by = "radius", cols = c( "lightgray", "darkblue")) + RotatedAxis()
+p13
+pdf(file = paste0(currentjob,"dotplotADt.pdf"), width=8.5, height=, paper='special')
+p13
+dev.off()
+
+Tregs<- subset(CD4T_integrated, idents = c("Tregs_Rhigh","Tregs_Rlow", "LAG3_Tregs"))
+Tregs@active.ident <- factor(Tregs@active.ident, 
+                            levels = c("LAG3_Tregs", "Tregs_Rlow",  "Tregs_Rhigh"))
+p14<-DotPlot(Tregs, 
+        features = c("FOXP3", "LAG3", "TIGIT", "CTLA4", "ICOS", "PDCD1", "TNFRSF4", "TNFRSF18", "BTLA","CD226", "CD244", "LAIR1", "CD27", "CD28", "EOMES", "IKZF2", "IKZF3","JUN", "IL10", "TGFB1",  "IL21", "IL32", "IRF1", "KLRB1", "PRDM1", "DUSP2", "DUSP4" ), 
+        cols = c("lightgray", "darkblue"), 
+  scale = TRUE) + RotatedAxis() 
+pdf(file = paste0(currentjob,"dotplot.pdf"), width=10, height=3, paper='special')
+```
+
+```{r subsets, message=FALSE, warning=FALSE}
+
+Idents(CD4T_integrated) <- "hash.ID"
+
+
+s1 <- DimPlot(CD4T_integrated, reduction = "wnn.umap",group.by = "hash.ID", pt.size =0.5, cols=c("#5698c4ff", "#ff9955ff", "#999999fe"))
+s1
+ 
+s1
+pdf(file = paste0(currentjob,"HTOs.pdf"), width=12, height=14, paper='special')
+s1
+dev.off()
+
+
+Tonsil<- subset(CD4T_integrated, idents = "C253-Tonsil")
+DimPlot(Tonsil, reduction = "wnn.umap", label = TRUE, pt.size = 0.5) 
+s2<- DimPlot(Tonsil, reduction = "wnn.umap", pt.size = 0.5, group.by = "orig.ident", cols=c("#666666ff","#999999fe", "#a3acb9ff"))
+table(Tonsil$seurat_clusters)
+
+FL<- subset(CD4T_integrated, idents = "C251-FL")
+DimPlot(FL, reduction = "wnn.umap", label = TRUE, pt.size = 0.5) 
+s3 <- DimPlot(FL, reduction = "wnn.umap", pt.size =0.5, group.by = "orig.ident", cols=c("#305691ff","#5698c4ff", "#87cddefe"))
+
+
+DLBCL<- subset(CD4T_integrated, idents = "C252-DLBCL")
+DimPlot(DLBCL, reduction = "wnn.umap", label = TRUE, pt.size = 0.5)
+s4 <- DimPlot(DLBCL, reduction = "wnn.umap", pt.size =0.5, group.by = "orig.ident", cols=c("#e97550ff","#ff9955ff", "#ffb397ff"))
+
+s1 + s2 + s3 + s4
+dev.copy(pdf,paste0(currentjob, "_tissuesample.pdf"), width=13, height=10, paper='special')
+s1 + s2 + s3 + s4
+dev.off()
+dev.set(dev.next())
+
+```
+
+```{r subsets, message=FALSE, warning=FALSE}
+table(Idents(CD4T_integrated))
+prop.table(table(Idents(CD4T_integrated))) 
+
+Tonsil.list <- SplitObject(Tonsil, split.by = "orig.ident")
+T1<-Tonsil.list$ptg1
+table(T1$seurat_clusters)
+
+T2<-Tonsil.list$ptg2
+table(T2$seurat_clusters)
+
+T3<-Tonsil.list$ptg3
+table(T3$seurat_clusters)
+
+
+FL.list <- SplitObject(FL, split.by = "orig.ident")
+FL1<-FL.list$ptg1
+table(FL1$seurat_clusters)
+
+FL2<-FL.list$ptg2
+table(FL2$seurat_clusters)
+
+FL3<-FL.list$ptg3
+table(FL3$seurat_clusters)
+
+DLBCL.list <- SplitObject(DLBCL, split.by = "orig.ident")
+D1<-DLBCL.list$ptg1
+table(D1$seurat_clusters)
+
+D2<-DLBCL.list$ptg2
+table(D2$seurat_clusters)
+
+D3<-DLBCL.list$ptg3
+table(D3$seurat_clusters)
+
+FL_merged<- merge(FL1, y = c(FL2, FL3), add.cell.ids = c("FL1","FL2","FL3"), project = "Merged_FL")
+DLBCL_merged<- merge(D1, y = c(D2, D3), add.cell.ids = c("DLBCL1","DLBCL2","DLBCL3"), project = "Merged_DLBCL")
+Tonsil_merged<- merge(T1, y = c(T2, T3), add.cell.ids = c("Tonsil1","Tonsil2","Tonsil3" ), project = "Merged_Tonsil")
+
+table(FL_merged$orig.ident)
+table(DLBCL_merged$orig.ident)
+table(Tonsil_merged$orig.ident)
+```
+
+
+```{r Data for CybersortX, message=FALSE, warning=FALSE}
+
+library(tidyverse)
+info1 <- cbind(CD4T_integrated$HTO_classification , CD4T_integrated$orig.ident)
+info1<- as.data.frame(info1)
+names(info1)<- c("tissue","run")
+info1$tissueandrun  = str_c(info1$tissue,"_",info1$run)
+info1$tissue <-NULL
+info11<-info1
+info11$run = gsub("ptg", "Run", info11$run)
+
+
+info2<- cbind(CD4T_integrated@active.ident , info11)
+info2 <- rownames_to_column(info2, var = "cellID")
+info2$cellID = gsub("-", ".", info2$cellID)
+
+umap_wnn = cbind("Barcode" = rownames(Embeddings(object = CD4T_integrated, reduction = "wnn.umap")), Embeddings(object = CD4T_integrated, reduction = "wnn.umap"))
+
+info3<- cbind(info2, umap_wnn)
+info3$Barcode<-NULL
+
+info3$tissueandrun = gsub("C251-FL_ptg", "FL", info3$tissueandrun)
+
+info3$tissueandrun = gsub("C252-DLBCL_ptg", "DLBCL", info3$tissueandrun)
+
+info3$tissueandrun = gsub("C253-Tonsil_ptg", "Tonsil", info3$tissueandrun)
+
+
+umap_rna = cbind("Barcode" = rownames(Embeddings(object = CD4T_rna, reduction = "umap")), Embeddings(object = CD4T_rna, reduction = "umap"))
+
+
+rna_clusters<-CD4T_rna@active.ident
+
+rna_clusters<- as.data.frame(rna_clusters)
+
+rna_info<- cbind(rna_clusters, umap_rna )
+
+allinfo<- cbind(info3, rna_info)
+
+allinfo$Barcode<-NULL
+
+write.table(allinfo, "2901annotation_file.txt", sep = "\t", quote=F, row.names=F) 
+
+gep<- CD4T_integrated@assays$ADT@counts
+
+#write.table(gep, "2801_count_matrix2.txt", sep="\t", quote=F, row.names=F)
+
+
+write.table(gep, "2901_count_matrixADT.txt", sep="\t", quote=F, row.names=T)
+
+
+
+write.table(info2_, "_barcodes_annotation_cluster_sample_umap.txt", sep="\t")
+write.table(info2_, "_barcodes_annotation_cluster_sample.txt", sep="\t")
+```
+
+
+```{r Heatmap: Top10 genes per Cluster, message=FALSE, warning=FALSE}
+
+ptreg <- DimPlot(Tregs, reduction = 'wnn.umap', repel = TRUE, label.size = 7, pt.size = 1, cols = c('#B60A1C',  '#11477A',  '#c3ce3d'))
+ptreg 
+pdf(file = paste0(currentjob,"_integ.UMAP_Tregwnn_annotated.pdf"), width=13, height=10, paper='special')
+ptreg
+dev.off()
+dev.set(dev.next())
+
+Tregs.integrated.markers <- FindAllMarkers(
+  Tregs,
+  only.pos = F,
+  min.pct = 0.1,
+  logfc.threshold = 0.25
+  )
+
+Tregsall <- Tregs.integrated.markers %>% group_by(cluster) %>% top_n(n = 1500, wt = avg_log2FC)
+
+
+p9<- DoHeatmap(Tregs, features = Tregstop30$gene)+ scale_fill_gradientn(colors = c("#450e57ff", "#34618dff", "#f8e620ff"))
+p9
+pdf(file = paste0(currentjob,"_integrated.heatmap2.Tregs30.pdf"), width=10, height=14, paper='special')
+p9
+dev.off()
+
+TregsFCmarkers <- read.csv("C:/Users/ivanaspa/Desktop/2202Top30-Tregs.csv") 
+DoHeatmap(Tregs, features = TregsFCmarkers$gene)+ scale_fill_gradientn(colors = c("#0262E0", "black", "#F8FA0D"))
+
+
+write.table(Tregstop30, paste0(currentjob,"Top30-Tregs.csv"))
+```
+
+```{r Volcano plots }
+  CD4T_integrated = readRDS("/Users/ankushs/Dropbox (UiO)/Data_Visualization/TREGS/TREGSPart2_Clustering_datasetfromShinyApp_1.rds")
+
+library(EnhancedVolcano)
+
+TregsRh_l.markers <- FindMarkers(
+  CD4T_integrated,
+  ident.1 = "actTregs", ident.2 = "nTregs", 
+  only.pos = F,
+  min.pct = 0.5,
+   logfc.threshold = 0.35
+  )
+
+write.table(TregsRh_l.markers,"actTregsvsnTregs0.35.txt")
+
+volc<- EnhancedVolcano(TregsRh_l.markers,
+    lab = rownames(TregsRh_l.markers),
+    x = 'avg_log2FC',
+    y = 'p_val_adj',
+    title = 'actTregs vs nTregs',
+ selectLab = c('ZNF331','DUSP2','DUSP4',
+      'CXCR4','NFKBIA','IRF1','TNFRSF4','TXNIP','HSPA1A', 'HSPA1B', 'TNFRSF18', 'TNFAIP3'),
+    xlab = bquote(~Log[2]~ 'fold change'),
+    pCutoff = 10e-160,
+    FCcutoff = 0.5,
+    pointSize = 4.0,
+    labSize = 6.0,
+    labCol = 'black',
+    colAlpha = 4/5,
+    legendPosition = 'right',
+    legendLabSize = 20,
+    legendIconSize = 6.0,
+    drawConnectors = TRUE,
+    widthConnectors = 0.5,
+    colConnectors = 'black')
+volc
+
+TregsRh_l3.markers <- FindMarkers(
+  CD4T_integrated,
+  ident.1 = "actTregs", ident.2 = "LAG3_Tregs", 
+  only.pos = F,
+  min.pct = 0.5,
+  logfc.threshold = 0.35
+  )
+write.table(TregsRh_l3.markers,"actTregsvsLAG3_Tregs0.35.txt")
+volc2<- EnhancedVolcano(TregsRh_l3.markers,
+    lab = rownames(TregsRh_l3.markers),
+    x = 'avg_log2FC',
+    y = 'p_val_adj',
+    title = 'actTregs vs LAG3_Tregs',
+  selectLab = c('LAG3','KLRB1','IKZF3',
+      'PDCD1','CD69','FOXP3','JUN','IL10RA', 'TIGIT', 'TNFRSF4', 'CD74'),
+    xlab = bquote(~Log[2]~ 'fold change'),
+    pCutoff = 10e-250,
+    FCcutoff = 0.5,
+    pointSize = 4.0,
+    labSize = 6.0,
+    labCol = 'black',
+    colAlpha = 4/5,
+    legendPosition = 'right',
+    legendLabSize = 20,
+    legendIconSize = 6.0,
+    drawConnectors = TRUE,
+    widthConnectors = 0.5,
+    colConnectors = 'black')
+volc2
+
+#write.table(TregsRh_l.markers,"actTregs_vs_nTregs_markers.csv",sep="\t")
+#write.table(TregsRh_l3.markers,"actTregs_vs_LAG3Tregs_markers.csv",sep="\t")
+```
+
+```{r cars}
+
+library(RITAN)
+library(RITANdata)
+library(dplyr)
+library(erer)
+
+Rhigh.markers <- FindMarkers(CD4T_integrated, ident.1 = "actTregs", logfc.threshold = 0.25, test.use = "roc", only.pos = TRUE)
+Rhigh<- tibble::rownames_to_column(Rhigh.markers, "Gene")
+Rhigh<-as.list(Rhigh$Gene)
+
+Rlow.markers <- FindMarkers(CD4T_integrated, ident.1 = "nTregs", logfc.threshold = 0.25, test.use = "roc", only.pos = TRUE)
+Rlow<- tibble::rownames_to_column(Rlow.markers, "Gene")
+Rlow<-as.list(Rlow$Gene)
+
+lag3.markers <- FindMarkers(CD4T_integrated, ident.1 = "LAG3_Tregs", logfc.threshold = 0.25, test.use = "roc", only.pos = TRUE)
+LAG3T<- tibble::rownames_to_column(lag3.markers, "Gene")
+LAG3T<-as.list(LAG3T$Gene)
+
+de.genes<-  list(Rhigh, Rlow, LAG3T)
+names(de.genes) <-c("Rhigh", "Rlow","Lag3_Tregs")
+
+resources <- c("MSigDB_Hallmarks","KEGG_filtered_canonical_pathways")
+e <- term_enrichment_by_subset(de.genes, resources = resources, all_symbols = cached_coding_genes,q_value_threshold = 0.01, verbose = TRUE, display_type = "q",
+                          phred = TRUE)
+e
+pdf("Hallmark_KEGG_Pathways_pathway_enrichment_p01.pdf")
+plot(e, show_values = FALSE, label_size_y = 5, label_size_x = 5,annotation_palates = c("RDPu"),cap=20)
+dev.off()
+   
+summary(e)
+write.table(e,"pathway_enrichment_hall_Kegg.csv",sep="\t")
+pdf("pathway_enrichment.pdf")
+plot(e, show_values = TRUE, label_size_y = 5, label_size_x = 5, cap=5 )
+dev.off()
+
+### Values in e ploted in Prism
+
+```
+
+```{r genelist per pathway, echo=FALSE}
+
+genes.factor.1 <-Rhigh
+genes.factor.2<- Rlow
+genes.factor.3 <- LAG3T
+# call the enrichr function to find gene sets enriched
+# in each latent factor in the GO Biological Processes 2018 library
+
+go.factor.1 <- enrichR::enrichr(genes.factor.1,
+                                databases = c("MSigDB_Hallmark_2020"))$MSigDB_Hallmark_2020
+go.factor.1
+
+go.factor.2 <- enrichR::enrichr(genes.factor.2,
+                                databases = c("MSigDB_Hallmark_2020"))$MSigDB_Hallmark_2020
+go.factor.2
+
+go.factor.3 <- enrichR::enrichr(genes.factor.3,
+                                databases = c("MSigDB_Hallmark_2020"))$MSigDB_Hallmark_2020
+go.factor.3
+
+write.csv(go.factor.1,"hallmark_pathways_actTregs.csv",sep="\t")
+write.csv(go.factor.2,"hallmark_pathways_nTregs.csv",sep="\t")
+write.csv(go.factor.3,"hallmark_pathways_LAG3Tregs.csv",sep="\t")
+
+
+go.factor.11 <- enrichR::enrichr(genes.factor.1,
+                               databases = c("KEGG_2019_Human"))$KEGG_2019_Human
+go.factor.11
+write.csv(go.factor.11,"KEGG_2019_Human_pathways_actTregs.csv",sep="\t")
+
+go.factor.22<- enrichR::enrichr(genes.factor.2,
+                               databases = c("KEGG_2019_Human"))$KEGG_2019_Human
+go.factor.22
+write.csv(go.factor.22,"KEGG_2019_Human_pathways_nTregs.csv",sep="\t")
+
+go.factor.33 <- enrichR::enrichr(genes.factor.3,
+                               databases = c("KEGG_2019_Human"))$KEGG_2019_Human
+go.factor.33
+write.csv(go.factor.33,"KEGG_2019_Human_pathways_LAG3_Tregs.csv",sep="\t")
+
+write.table(Tregs.integrated.markers,"Tregs_markers.txt",sep="\t")
+
+library(kableExtra)
+go.factor.1$Genes <- gsub(";", "; ", go.factor.1$Genes)
+go.factor.1$Genes
+the.table <- knitr::kable(head(go.factor.2, 3)[,c("Term", "Adjusted.P.value")],caption="GO-terms associated with NMF factor 2", format="latex")
+#the.table <- kableExtra::column_spec(the.table, 1, width="10em")
+```
+
+```{r genelist per pathway, echo=FALSE}
+##################################
+
+
+original_gene_list <- TregsRh_l.markers$avg_log2FC
+names(original_gene_list) <- row.names(TregsRh_l.markers)
+gene_list = sort(original_gene_list, decreasing = TRUE)
+
+
+#gmtfile <- system.file("extdata", "c5.cc.v5.0.entrez.gmt", package="clusterProfiler")
+msigdb_H <- read.gmt("C:/Users/ivanaspa/Downloads/h.all.v7.4.symbols.gmt")
+egmt3 <- GSEA(gene_list, TERM2GENE=msigdb_H, verbose=FALSE,  pvalueCutoff = 1)
+head(egmt3)
+egmt3
+dotplot(egmt3, showCategory=20)
+
+library(enrichplot)
+egmt3@result[["ID"]]
+p1<-gseaplot2(egmt3, title = egmt3$Description[1], geneSetID = 1, color = "black")
+p2<-gseaplot2(egmt3, title = egmt3$Description[5], geneSetID = 5, color = "black")
+p3<-gseaplot2(egmt3, title = egmt3$Description[9], geneSetID = 9, color = "black")
+p7<-gseaplot2(egmt3, title = egmt3$Description[1], geneSetID = 1, color = "black")
+
+######################
+original_gene_list2 <- TregsRh_l3.markers$avg_log2FC
+names(original_gene_list2) <- row.names(TregsRh_l3.markers)
+gene_list2 = sort(original_gene_list2, decreasing = TRUE)
+
+
+#gmtfile <- system.file("extdata", "c5.cc.v5.0.entrez.gmt", package="clusterProfiler")
+msigdb_H <- read.gmt("C:/Users/ivanaspa/Downloads/h.all.v7.4.symbols.gmt")
+egmt4 <- GSEA(gene_list2, TERM2GENE=msigdb_H, verbose=FALSE,  pvalueCutoff = 1)
+head(egmt4)
+egmt4
+dotplot(egmt4, showCategory=20)
+
+egmt4@result[["ID"]]
+p4<-gseaplot(egmt4, by = "all", title = egmt4$Description[1], geneSetID = 1, color.line = "blue")
+p5<-gseaplot(egmt4, by = "all", title = egmt4$Description[2], geneSetID = 2,color.line = "blue")
+p6<-gseaplot(egmt4, by = "all", title = egmt4$Description[6], geneSetID = 6,color.line = "blue")
+
+p4<-gseaplot2(egmt4, title = egmt4$Description[1], geneSetID = 1, color = "black")
+p5<-gseaplot2(egmt4, title = egmt4$Description[6], geneSetID = 6, color = "black")
+p6<-gseaplot2(egmt4, title = egmt4$Description[2], geneSetID = 2, color = "black")
+
+p1
+p2
+p3
+p4
+p5
+p6
+########
+Tregs.markers <- FindMarkers(CD4T_integrated, ident.1 = "Tregs_Rhigh",ident.2 = "Tregs_Rlow", ident.3 = "LAG3_Tregs", logfc.threshold = 0.25, test.use = "roc", only.pos = TRUE)
+
+original_gene_list3 <- Tregs.markers$avg_log2FC
+names(original_gene_list3) <- row.names(Tregs.markers)
+gene_list3 = sort(original_gene_list3, decreasing = TRUE)
+
+
+#gmtfile <- system.file("extdata", "c5.cc.v5.0.entrez.gmt", package="clusterProfiler")
+msigdb_H <- read.gmt("C:/Users/ivanaspa/Downloads/h.all.v7.4.symbols.gmt")
+egmt5 <- GSEA(gene_list3, TERM2GENE=msigdb_H, verbose=FALSE,  pvalueCutoff = 1)
+head(egmt5)
+egmt5
+dotplot(egmt5, showCategory=20)
+
+egmt5@result[["ID"]]
+gseaplot(egmt5, by = "all", title = egmt5$Description[1], geneSetID = 1)
+gseaplot(egmt5, by = "all", title = egmt5$Description[11], geneSetID = 11)
+gseaplot(egmt5, by = "all", title = egmt5$Description[10], geneSetID = 10)
+```
+
+
