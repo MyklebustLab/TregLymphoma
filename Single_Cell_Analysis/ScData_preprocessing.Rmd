@@ -13,53 +13,16 @@ output:
 ```{r setup, message=FALSE, warning=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 Sys.setenv('R_MAX_VSIZE'=1600000)
+#for Windows 
 invisible(utils::memory.limit(100000))
 ```
 
 #R libraries
 ```{r Libraries, message=FALSE, warning=FALSE}
 
-#if (!requireNamespace("devtools", quietly = TRUE)) install.packages("devtools")
-# Libraries
-library(markdown)
-library(AnnotationHub)
-library(clustree)
-library(cowplot)
-library(ensembldb)
-library(ggthemes)
-library(ggplot2)
-library(ggplotify)
-library(gridGraphics)
-library(Matrix)
-library(org.Hs.eg.db)
-library(Matrix.utils)
-library(patchwork)
-library(reticulate)
-library(reshape2)
-library(RCurl)
-library(scCATCH)
-library(scales)
-library(scater)
-library(Seurat)
-library(SeuratDisk)
-library(SingleCellExperiment)
-library(SummarizedExperiment)
-library(EnsDb.Hsapiens.v86)
-library(BSgenome.Hsapiens.UCSC.hg38)
-library(chromVAR)
-library(tidyverse)
-library(edgeR)
-library(plotly)
-library(robustbase)
-library(knitr)
+reqPkg = c("markdown","AnnotationHub","clustree","cowplot","ensembldb","ggthemes","ggplot2","ggplotify","gridGraphics","Matrix","org.Hs.eg.db","Matrix.utils","patchwork","reticulate","reshape2","RCurl","scCATCH","scales","scater","Seurat","SeuratDisk","SingleCellExperiment","SummarizedExperiment","EnsDb.Hsapiens.v86","BSgenome.Hsapiens.UCSC.hg38","chromVAR","tidyverse","edgeR","plotly","robustbase","knitr","VISION","robustbase")
 
-# Extra
-library(kableExtra) #load after dplyr
-library(VISION)
-#library(dyno)
-# library(JASPAR2018)
-# library(TFBSTools)
-# library(Signac)
+lapply(reqPkg, library, character.only = TRUE)
 
 ```
 
@@ -270,7 +233,6 @@ Sys.setenv('R_MAX_VSIZE'=1600000)
 
 ```{r QCPLOTS2 , message=FALSE, warning=FALSE}
 #Removing no longer neccessary objects 
-
 rm(Run1)
 rm(Run2)
 rm(Run3)
